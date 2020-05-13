@@ -1,0 +1,331 @@
+---
+title: "Zooplankton-Cyanobacteria project, random forest calculations"
+author: "Laura Uusitalo; laura.uusitalo@ymparisto.fi"
+date: "2018-2020"
+output:
+  word_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+This paper documents the R code and the analyses done for assessing the effect of cyanobacteria on zooplankton based on field sampling data. The work is lead by Sanna Suikkanen in SYKE Marine Research Centre.
+
+
+## Prepping the data & packages
+```{r warning=FALSE, message=FALSE}
+setwd("D:/Users/uusitalol/RStudio/ZplCyanoCalculations_Sept2015")
+
+#packages
+library(mice)
+library(caret)
+library(VIM)
+library(missForest)
+library(ggplot2)
+
+#this file is created in the CombineZplPplWithPhyschem.R script:
+load("dataforRF.RData") # object name  = dat
+
+#Set seed
+seed <- 17
+set.seed(seed)
+
+```
+
+## Visualize & impute missing values
+
+Visualize the missing values.
+See https://www.r-bloggers.com/imputing-missing-data-with-r-mice-package/.
+
+
+```{r}
+aggr(dat, col=c('navyblue','red'), numbers=TRUE, sortVars=TRUE, labels=names(dat), cex.axis=.7, gap=3, ylab=c("Histogram of missing data","Pattern"))
+```
+
+
+Impute missing values using missing forest method.
+
+
+```{r}
+dat.mF<-missForest(dat[, colSums(is.na(dat))>0], maxiter=50)
+
+dat.mF$OOBerror
+
+#replace 
+datI<-dat
+datI$TEMP<-dat.mF$ximp$TEMP
+datI$SAL<-dat.mF$ximp$SAL
+datI$TOTP<-dat.mF$ximp$TOTP
+datI$CHL<-dat.mF$ximp$CHL
+```
+
+For each class variable (the variable we're explaining), make a separate data set. In these data sets use only a subset of the features (predictors, explaining variables):
+
+For zooplankton variables (mean size, kurtosis, nauplius:female ratio, taxa biomasses) we use:
+- Nost_bm
+- Nost_share
+- OtherC_bm
+- OtherC_share
+- Chloro
+- Chryso
+- Crypto
+- Diatomo
+- Dino
+- Eugleno
+- Prymnesio
+- Mx_bm
+- TEMP
+- SAL
+- CHL
+- TOTP
+-pplkurtosis
+- Lat
+- Long
+- nonCyanoTotBM
+- nonCyanoAutoBM
+- year
+
+
+For phytoplankton variables (total biomass, autotroph biomass, mixotroph biomass, kurtosis), we use 
+
+the physico-chemical variables (excluding chl-a), year, and sampling station coordinates as features. Phytoplankton class variables (the targets we are predicting) are measured without cyanobacteria, and the biomasses of Nostocales and other cyanobacteria are used as features for these classes.
+- ZPLsize
+- NFratio
+- Acartia
+- Bosmina
+- Cercopagis
+- Eurytemora
+- Limnocalanus
+- Nauplius
+- Pseudocalanus
+- Rotatoria
+- TEMP
+- SAL
+- TOTP
+- zplkurtosis
+- Lat
+- Long
+- year
+- Nost_bm
+- OtherC_bm
+
+
+```{r}
+
+#all colnames in varI
+#c("Station", "PPLdate", "ZPLdate",  "ZPLsize", "NFratio", "Acartia", "Bosmina", "Cercopagis", "Eurytemora",      "Limnocalanus", "Nauplius", "Pseudocalanus", "Rotatoria", "Nost_bm", "Nost_share", "OtherC_bm", "OtherC_share",    "Chloro", "Chryso", "Crypto", "Diatomo", "Dino", "Eugleno", "Prymnesio", "Mx_bm", "envDate", "TEMP", "SAL", "CHL",    "TOTP", "datediff1", "datediff2", "zplkurtosis", "pplkurtosis", "Lat",  "Long", "maxdiff", "diffsum", "nas", "nonCyanoTotBM", "nonCyanoAutoBM", "year")    
+
+#Zooplankton classes; each has 22 explaining variables
+
+dat.ms <- datI[, c("ZPLsize", "Nost_bm", "Nost_share", "OtherC_bm", "OtherC_share",    "Chloro", "Chryso", "Crypto", "Diatomo", "Dino", "Eugleno", "Prymnesio", "Mx_bm", "TEMP", "SAL", "CHL",    "TOTP", "pplkurtosis", "Lat",  "Long","nonCyanoTotBM", "nonCyanoAutoBM", "year")]
+
+dat.nf <- datI[, c("NFratio", "Nost_bm", "Nost_share", "OtherC_bm", "OtherC_share",    "Chloro", "Chryso", "Crypto", "Diatomo", "Dino", "Eugleno", "Prymnesio", "Mx_bm", "TEMP", "SAL", "CHL",    "TOTP", "pplkurtosis", "Lat",  "Long","nonCyanoTotBM", "nonCyanoAutoBM", "year")]
+
+dat.nauplius <- datI[, c("Nauplius", "Nost_bm", "Nost_share", "OtherC_bm", "OtherC_share",    "Chloro", "Chryso", "Crypto", "Diatomo", "Dino", "Eugleno", "Prymnesio", "Mx_bm", "TEMP", "SAL", "CHL",    "TOTP", "pplkurtosis", "Lat",  "Long","nonCyanoTotBM", "nonCyanoAutoBM", "year")]
+
+dat.zplkurtosis <- datI[, c("zplkurtosis", "Nost_bm", "Nost_share", "OtherC_bm", "OtherC_share",    "Chloro", "Chryso", "Crypto", "Diatomo", "Dino", "Eugleno", "Prymnesio", "Mx_bm", "TEMP", "SAL", "CHL",    "TOTP", "pplkurtosis", "Lat",  "Long","nonCyanoTotBM", "nonCyanoAutoBM", "year")]
+
+dat.Acartia <- datI[, c("Acartia", "Nost_bm", "Nost_share", "OtherC_bm", "OtherC_share",    "Chloro", "Chryso", "Crypto", "Diatomo", "Dino", "Eugleno", "Prymnesio", "Mx_bm", "TEMP", "SAL", "CHL",    "TOTP", "pplkurtosis", "Lat",  "Long","nonCyanoTotBM", "nonCyanoAutoBM", "year")]
+
+dat.Bosmina <-datI[, c("Bosmina", "Nost_bm", "Nost_share", "OtherC_bm", "OtherC_share",    "Chloro", "Chryso", "Crypto", "Diatomo", "Dino", "Eugleno", "Prymnesio", "Mx_bm", "TEMP", "SAL", "CHL",    "TOTP", "pplkurtosis", "Lat",  "Long","nonCyanoTotBM", "nonCyanoAutoBM", "year")]
+
+dat.Eurytemora <- datI[, c("Eurytemora", "Nost_bm", "Nost_share", "OtherC_bm", "OtherC_share",    "Chloro", "Chryso", "Crypto", "Diatomo", "Dino", "Eugleno", "Prymnesio", "Mx_bm", "TEMP", "SAL", "CHL",    "TOTP", "pplkurtosis", "Lat",  "Long","nonCyanoTotBM", "nonCyanoAutoBM", "year")]
+
+dat.Pseudocalanus <- datI[, c("Pseudocalanus", "Nost_bm", "Nost_share", "OtherC_bm", "OtherC_share",    "Chloro", "Chryso", "Crypto", "Diatomo", "Dino", "Eugleno", "Prymnesio", "Mx_bm", "TEMP", "SAL", "CHL",    "TOTP", "pplkurtosis", "Lat",  "Long","nonCyanoTotBM", "nonCyanoAutoBM", "year")]
+
+dat.Rotatoria <- datI[, c("Rotatoria", "Nost_bm", "Nost_share", "OtherC_bm", "OtherC_share",    "Chloro", "Chryso", "Crypto", "Diatomo", "Dino", "Eugleno", "Prymnesio", "Mx_bm", "TEMP", "SAL", "CHL",    "TOTP", "pplkurtosis", "Lat",  "Long","nonCyanoTotBM", "nonCyanoAutoBM", "year")]
+
+#phytoplankton classes; ; each has 19 explaining variables
+
+dat.auto <- datI[, c("nonCyanoAutoBM", "ZPLsize", "NFratio", "Acartia", "Bosmina", "Cercopagis", "Eurytemora",      "Limnocalanus", "Nauplius", "Pseudocalanus", "Rotatoria", "TEMP", "SAL", "TOTP", "zplkurtosis", "Lat", "Long",  "year", "Nost_bm", "OtherC_bm")]
+
+dat.mixo <-  datI[, c("Mx_bm", "ZPLsize", "NFratio", "Acartia", "Bosmina", "Cercopagis", "Eurytemora",      "Limnocalanus", "Nauplius", "Pseudocalanus", "Rotatoria", "TEMP", "SAL", "TOTP", "zplkurtosis", "Lat", "Long",  "year", "Nost_bm", "OtherC_bm")]
+
+dat.tot <-  datI[, c("nonCyanoTotBM", "ZPLsize", "NFratio", "Acartia", "Bosmina", "Cercopagis", "Eurytemora",      "Limnocalanus", "Nauplius", "Pseudocalanus", "Rotatoria", "TEMP", "SAL", "TOTP", "zplkurtosis", "Lat", "Long",  "year", "Nost_bm", "OtherC_bm")]
+
+dat.pplkurtosis<- datI[, c("pplkurtosis", "ZPLsize", "NFratio", "Acartia", "Bosmina", "Cercopagis", "Eurytemora",      "Limnocalanus", "Nauplius", "Pseudocalanus", "Rotatoria", "TEMP", "SAL", "TOTP", "zplkurtosis", "Lat", "Long",  "year", "Nost_bm", "OtherC_bm")]
+
+```
+
+Finally, make random forest regression models for all explained variables. We use out-of-bag validation and root mean squared error (RMSE) to evaluate the model fit. The optimal number of predictors for each target variable was selected using the root mean square error (RMSE) of the repeated cross-validation.
+
+Below, the optimal number of predictors can be found in the result text on row that says "## The final value used for the model was mtry = ". The RMSE with different numbers of predictors has also been plotted for each target variable. Scatter plot of the target variable has been plotted against all the predictors that were chosen for the final model.
+
+Random regression forests do a multiple nonlinear regression. A nice explanation can be found here:
+https://www.quora.com/How-does-random-forest-work-for-regression-1
+
+
+```{r}
+#########
+#RFCV cross-validation (check what happens to classification accuracy when new explanatory variables are included) 
+# and cross-validated Random Forest regression
+
+#settings
+#graphics settings
+theme1 <- trellis.par.get()
+theme1$plot.symbol$col = rgb(.2, .2, .2, .4)
+theme1$plot.symbol$pch = 16
+theme1$plot.line$col = rgb(1, 0, 0, .7)
+theme1$plot.line$lwd <- 2
+trellis.par.set(theme1)
+
+#rf settings
+#seed has been set above
+control <- trainControl(method="oob")
+mtryZ <- c(1:22)
+mtryP <- c(1:19)
+tunegridZ <- expand.grid(.mtry=mtryZ)
+tunegridP <- expand.grid(.mtry=mtryP)
+
+```
+
+Create the function to run the random forest
+```{r}
+runRF <- function(dd, rf) {
+  respvar <- colnames(dd)[1]
+  colnames(dd)[1] <- "Class"
+  rf <- train(Class ~ ., data=dd, method="rf", tuneGrid=tunegrid, trControl=control, ntree = 100000,  importance=TRUE)
+  print(rf)
+  plot(rf)
+  v <- varImp(rf, scale = TRUE)
+  print(v)
+
+  imp <- rownames(v$importance)[order(v$importance, decreasing=TRUE)]
+  n <- rf$bestTune$mtry
+  ddtmp <- ddtmp<-dd[,1, drop=F]
+
+
+  return(rf)
+}
+  
+
+```
+
+Run the random forests for each target variable:
+
+```{r}
+#set tunegrid for zpl class variables
+
+tunegrid <- tunegridZ
+
+```
+
+##Zpl mean size
+```{r zpl_meansize}
+dd<-dat.ms
+rf<-runRF(dd)
+ save(rf, file = "ms_rf.RData")
+
+```
+
+#Zooplankton kurtosis
+```{r zpl_kurtosis}
+dd<-dat.zplkurtosis
+rf<-runRF(dd)
+ save(rf, file = "zplkurtosis_rf.RData")
+```
+
+#zpl Nauplius to female ratio
+```{r zpl_nauplius_female}
+dd<-dat.nf
+rf<-runRF(dd)
+ save(rf, file = "nf_rf.RData")
+```
+
+#zpl Nauplius
+```{r zpl_nauplius}
+dd<-dat.nauplius
+rf<-runRF(dd)
+ save(rf, file = "nauplius_rf.RData")
+```
+
+#Acartia BM
+```{r zpl_Acartia}
+dd<-dat.Acartia
+rf<-runRF(dd)
+ save(rf, file = "Acartia_rf.RData")
+```
+
+#Bosmina BM
+```{r zpl_Bosmina}
+dd<-dat.Bosmina
+rf<-runRF(dd)
+ save(rf, file = "Bosmina_rf.RData")
+```
+
+#Eurytemora BM
+```{r zpl_Eurytemora}
+dd<-dat.Eurytemora
+rf<-runRF(dd)
+ save(rf, file = "Eurytemora_rf.RData")
+```
+
+#Pseudocalanus BM
+```{r zpl_Pseudocalanus}
+dd<-dat.Pseudocalanus
+rf<-runRF(dd)
+ save(rf, file = "Pseudocalanus_rf.RData")
+```
+
+#Rotatoria BM
+```{r zpl_Rotatoria}
+dd<-dat.Rotatoria
+rf<-runRF(dd)
+ save(rf, file = "Rotatoria_rf.RData")
+```
+
+
+#Phytoplankton kurtosis
+```{r phyto_kurtosis}
+dd<-dat.pplkurtosis
+rf<-runRF(dd)
+ save(rf, file = "pplkurtosis_rf.RData")
+
+```
+
+
+```{r}
+#set tunegrid for ppl class variables
+
+tunegrid <- tunegridP
+
+```
+
+
+#Phytoplankton autotroph biomass (without cyanobacteria)
+```{r phyto_autotophs}
+dd<-dat.auto
+rf<-runRF(dd)
+ save(rf, file = "auto_rf.RData")
+```
+
+#phytoplankton mixotroph biomass
+```{r phyto_mixo}
+dd<-dat.mixo
+rf<-runRF(dd)
+ save(rf, file = "mixo_rf.RData")
+```
+
+#Phytoplankton total biomass (without cyanobacteria)
+```{r phyto_total}
+dd<-dat.tot
+rf<-runRF(dd)
+ save(rf, file = "totppl_rf.RData")
+```
+
+## Demo of RF vs. linear regression
+Demonstrate the difference between linear regression and random forest regression, i.e. why RF finds significant explaining factors that are not significant in linear regression. Use the zooplankton mean size as the demo data. RF finds salinity and year as the two important explaining factors,k while linear regression shows only year as important. 
+ 
+```{r regrdemo}
+
+dd<-dat.ms 
+load("ms_rf.RData") #name: rf
+
+
+
+```
+
